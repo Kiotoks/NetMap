@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapa Infraestructura</title>
+    <style>
+        body { font-family: Arial; }
+        .device { cursor: pointer; }
+        #info { margin-top: 20px; padding: 10px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+
+<h2>Mapa Infraestructura - Fábrica</h2>
+
+<svg id="floor" width="800" height="500" style="border:1px solid black">
+
+    <!-- Plano simple ejemplo -->
+    <rect x="50" y="50" width="300" height="200" fill="none" stroke="black"/>
+    <text x="150" y="40">Producción</text>
+
+    <rect x="400" y="50" width="300" height="200" fill="none" stroke="black"/>
+    <text x="500" y="40">Oficinas</text>
+
+</svg>
+
+<div id="info">Haz clic en un dispositivo</div>
+
+<script>
+const API_URL = "http://127.0.0.1:8000/devices";
+const svg = document.getElementById("floor");
+const info = document.getElementById("info");
+
+function getColor(status) {
+    if (status === "online") return "green";
+    if (status === "offline") return "red";
+    return "orange";
+}
+
+async function loadDevices() {
+    const response = await fetch(API_URL);
+    const devices = await response.json();
+
+    devices.forEach(device => {
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", device.x);
+        circle.setAttribute("cy", device.y);
+        circle.setAttribute("r", 10);
+        circle.setAttribute("fill", getColor(device.status));
+        circle.setAttribute("class", "device");
+
+        circle.addEventListener("click", () => {
+            info.innerHTML = `
+                <strong>${device.name}</strong><br>
+                Tipo: ${device.type}<br>
+                IP: ${device.ip}<br>
+                Estado: ${device.status}
+            `;
+        });
+
+        svg.appendChild(circle);
+    });
+}
+
+svg.addEventListener("click", async (e) => {
+    if (e.target.tagName === "svg") {
+        const name = prompt("Nombre del dispositivo:");
+        if (!name) return;
+
+        const newDevice = {
+            name: name,
+            type: "switch",
+            x: e.offsetX,
+            y: e.offsetY,
+            status: "online",
+            ip: "192.168.1.100"
+        };
+
+        await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(newDevice)
+        });
+
+        location.reload();
+    }
+});
+
+loadDevices();
+</script>
+
+</body>
+</html>
