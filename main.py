@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -10,7 +11,6 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -20,8 +20,7 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
-
-class DeviceDB(Base):
+class Device(Base):
     __tablename__ = "devices"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
@@ -31,30 +30,24 @@ class DeviceDB(Base):
     status = Column(String)
     ip = Column(String)
 
-
 Base.metadata.create_all(bind=engine)
 
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
-class Device(BaseModel):
-    name: str
-    type: str
-    x: int
-    y: int
-    status: str
-    ip: str
+@app.get("/")
+def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-
-@app.get("/devices")
+@app.get("/api/devices")
 def get_devices():
     db = SessionLocal()
-    devices = db.query(DeviceDB).all()
-    return devices
+    return db.query(Device).all()
 
-
-@app.post("/devices")
-def create_device(device: Device):
+@app.post("/api/devices")
+def create_device(device: dict):
     db = SessionLocal()
-    new_device = DeviceDB(**device.dict())
+    new_device = Device(**device)
     db.add(new_device)
     db.commit()
     db.refresh(new_device)
