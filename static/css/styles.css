@@ -13,11 +13,11 @@ body {
 
 #workspace {
     width: 100vw;
-    height: 60vh;
+    height: 100vh;
     background: #333;
     cursor: grab;
     overflow: hidden;
-    position: relative;
+    position: absolute;
 }
 
 #canvas-container {
@@ -30,6 +30,7 @@ body {
 }
 
 #info-panel {
+    position: fixed;
     height: 40vh;
     padding: 10px;
     border-top: 2px solid #ccc;
