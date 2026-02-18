@@ -367,6 +367,8 @@ async function submitDevice() {
         body: JSON.stringify(payload)
     });
 
+    console.log(payload);
+
     infoPanel.innerHTML = "Dispositivo creado correctamente";
 
     loadPlano(currentPlano);

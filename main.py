@@ -2,9 +2,10 @@ from fastapi import FastAPI, Request, Query, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, CheckConstraint, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
 
 app = FastAPI()
 
@@ -26,31 +27,98 @@ Base = declarative_base()
 
 class Device(Base):
     __tablename__ = "devices"
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     type = Column(String)
+
     x = Column(Integer)
     y = Column(Integer)
-    status = Column(String)
-    ip = Column(String)
-    plano = Column(String)
 
-    # PC-specific fields
-    cpu = Column(String, nullable=True)
-    ram = Column(Integer, nullable=True)
-    gpu = Column(String, nullable=True)
+    status = Column(String)
+    plano = Column(String)
+    ip = Column(String)
+    descripcion = Column(Text)
+
+    last_update = Column(DateTime, default=datetime.utcnow)
+    place_name = Column(String)
+
+    # Relationships
+    pc = relationship("PC", back_populates="device", uselist=False)
+
+    connections_from = relationship(
+        "DeviceConnection",
+        foreign_keys="DeviceConnection.from_device_id",
+        back_populates="from_device",
+        cascade="all, delete"
+    )
+
+    connections_to = relationship(
+        "DeviceConnection",
+        foreign_keys="DeviceConnection.to_device_id",
+        back_populates="to_device",
+        cascade="all, delete"
+    )
+
+
+class PC(Base):
+    __tablename__ = "pcs"
+
+    device_id = Column(Integer, ForeignKey("devices.id"), primary_key=True)
+
+    user = Column(String)
+    cpu_benchmark = Column(String)
+    cpu = Column(String)
+    ram = Column(Integer)
+    office = Column(String)
+    antivirus = Column(String)
+    motherboard = Column(String)
+    disks = Column(String)
+    ram_ddr = Column(String)
+    gpu = Column(String)
+    gpu_memory = Column(String)
+
+    device = relationship("Device", back_populates="pc")
 
 class DeviceConnection(Base):
-    __tablename__ = "connections"
-    id = Column(Integer, primary_key=True, index=True)
+    __tablename__ = "device_connections"
+
+    id = Column(Integer, primary_key=True)
+
     from_device_id = Column(Integer, ForeignKey("devices.id"))
     to_device_id = Column(Integer, ForeignKey("devices.id"))
-    connection_type = Column(String, default="ethernet")
 
-    from_device = relationship("Device", foreign_keys=[from_device_id])
-    to_device = relationship("Device", foreign_keys=[to_device_id])
+    connection_type = Column(String)  # ethernet, fiber
+    description = Column(String)
+
+    __table_args__ = (
+        CheckConstraint(
+            'from_device_id != to_device_id',
+            name='no_self_connection'
+        ),
+    )
+
+    from_device = relationship(
+        "Device",
+        foreign_keys=[from_device_id],
+        back_populates="connections_from"
+    )
+
+    to_device = relationship(
+        "Device",
+        foreign_keys=[to_device_id],
+        back_populates="connections_to"
+    )
+
 
 Base.metadata.create_all(bind=engine)
+
+
+DEVICE_TYPE_MODELS = {
+    "pc": PC,
+    # Add more types here later
+}
+
 
 # -----------------------
 # TEMPLATES + STATIC
@@ -81,24 +149,111 @@ def get_devices(plano: str = Query(None)):
 def create_or_update_device(device: dict):
     db = SessionLocal()
     device_id = device.get("id")
+    print(device)
 
-    if device_id:
-        # update existing
-        db_device = db.query(Device).get(device_id)
-        if not db_device:
-            db.close()
-            raise HTTPException(status_code=404, detail="Device not found")
-        for k, v in device.items():
-            setattr(db_device, k, v)
-    else:
-        # new device
-        db_device = Device(**device)
-        db.add(db_device)
+    try:
+        device_type = device.get("type")
 
-    db.commit()
-    db.refresh(db_device)
-    db.close()
-    return db_device
+        if not device_type:
+            return {"error": "Device type is required"}
+
+        if device_type not in DEVICE_TYPE_MODELS:
+            return {"error": f"Unsupported device type: {device_type}"}
+
+        subtype_model = DEVICE_TYPE_MODELS[device_type]
+
+        if device_id:
+            # --------------------
+            # UPDATE EXISTING
+            # --------------------
+            db_device = db.query(Device).get(device_id)
+            if not db_device:
+                raise HTTPException(status_code=404, detail="Device not found")
+
+            # Update base fields
+            base_columns = {c.name for c in Device.__table__.columns}
+            for k, v in device.items():
+                if k in base_columns:
+                    print(k)
+                    setattr(db_device, k, v)
+
+            # Update subtype fields
+            subtype_instance = db.query(subtype_model).filter_by(device_id=device_id).first()
+
+            subtype_columns = {
+                c.name for c in subtype_model.__table__.columns
+                if c.name != "device_id"
+            }
+
+            subtype_data = {
+                k: v for k, v in device.items()
+                if k in subtype_columns
+            }
+
+            if subtype_instance:
+                for k, v in subtype_data.items():
+                    setattr(subtype_instance, k, v)
+            else:
+                # If subtype row doesn't exist, create it
+                subtype_instance = subtype_model(
+                    device_id=device_id,
+                    **subtype_data
+                )
+                db.add(subtype_instance)
+
+            db.commit()
+            db.refresh(db_device)
+
+            return {
+                "message": "Device updated successfully",
+                "device_id": db_device.id
+            }
+        else:
+            # --------------------
+            # CREATE NEW
+            # --------------------
+            base_columns = {c.name for c in Device.__table__.columns}
+
+            base_data = {
+                k: v for k, v in device.items()
+                if k in base_columns
+            }
+
+            new_device = Device(**base_data)
+            db.add(new_device)
+            db.flush()  # get ID before commit
+
+            subtype_columns = {
+                c.name for c in subtype_model.__table__.columns
+                if c.name != "device_id"
+            }
+
+            subtype_data = {
+                k: v for k, v in device.items()
+                if k in subtype_columns
+            }
+
+            subtype_instance = subtype_model(
+                device_id=new_device.id,
+                **subtype_data
+            )
+
+            db.add(subtype_instance)
+
+            db.commit()
+            db.refresh(new_device)
+
+            return {
+                "message": "Device created successfully",
+                "device_id": new_device.id
+            }
+
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+
+    finally:
+        db.close()
 
 @app.delete("/api/devices/{device_id}")
 def delete_device(device_id: int):
